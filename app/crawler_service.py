@@ -9,6 +9,7 @@ the same story always lands on the same partition).
 
     python -m app.crawler_service           # run forever
     python -m app.crawler_service --once    # one pass over all sources, then exit
+    python -m app.crawler_service --direct  # no Kafka: write straight to the database
 """
 import argparse
 import asyncio
@@ -18,8 +19,8 @@ from collections import OrderedDict
 from app.config import settings
 from app.crawlers import crawl_source
 from app.crawlers.fetcher import Fetcher
-from app.db import CrawlRun, Session, init_db, known_hashes, utcnow
-from app.enrich import url_hash
+from app.db import CrawlRun, Session, init_db, known_hashes, save_article, utcnow
+from app.enrich import enrich, url_hash
 from app.kafka import make_consumer, make_producer
 from app.sources import SOURCES, SOURCES_BY_NAME
 
@@ -62,9 +63,15 @@ class CrawlerService:
                 async with Session() as s:
                     stored = await known_hashes(s, [it["url_hash"] for it in items])
                 fresh = [it for it in items if it["url_hash"] not in stored and self.seen.add(it["url_hash"])]
-                for it in fresh:
-                    await self.producer.send(settings.raw_topic, it, key=it["url_hash"])
-                await self.producer.flush()
+                if self.producer:
+                    for it in fresh:
+                        await self.producer.send(settings.raw_topic, it, key=it["url_hash"])
+                    await self.producer.flush()
+                else:
+                    async with Session() as s:
+                        for it in fresh:
+                            await save_article(s, enrich(it))
+                        await s.commit()
                 status, err, n = "ok", None, len(fresh)
                 log.info("%-24s fetched=%-3d new=%d", source["name"], len(items), n)
             except Exception as exc:
@@ -100,16 +107,20 @@ class CrawlerService:
         finally:
             await consumer.stop()
 
-    async def main(self, once: bool) -> None:
+    async def main(self, once: bool, direct: bool = False) -> None:
         await init_db()
-        self.producer = await make_producer()
+        if not direct:
+            self.producer = await make_producer()
         try:
             if once:
                 await self.run_all()
+            elif direct:
+                await self.scheduler()
             else:
                 await asyncio.gather(self.scheduler(), self.job_runner())
         finally:
-            await self.producer.stop()
+            if self.producer:
+                await self.producer.stop()
             await self.fetcher.close()
 
 
@@ -117,4 +128,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
-    asyncio.run(CrawlerService().main(ap.parse_args().once))
+    ap.add_argument("--direct", action="store_true", help="no Kafka: enrich and write straight to the database")
+    args = ap.parse_args()
+    asyncio.run(CrawlerService().main(args.once, args.direct))

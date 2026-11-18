@@ -3,6 +3,7 @@
 Kept separate from fetching so they are easy to unit-test.
 Every item has: source, source_type, url, title, content, author, published_at (ISO 8601 or None)
 """
+import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
@@ -80,6 +81,44 @@ def parse_hn_item(d: dict, source: dict) -> dict | None:
     url = d.get("url") or f"https://news.ycombinator.com/item?id={d['id']}"
     published = _iso(datetime.fromtimestamp(d["time"], tz=timezone.utc)) if d.get("time") else None
     return item(source, url, d.get("title", ""), _clean_html(d.get("text", "")), d.get("by"), published)
+
+
+_IPB_STARTED_RE = re.compile(r"started\s+(\d{1,2} \w+ \d{4} - \d{1,2}:\d{2} [AP]M)", re.IGNORECASE)
+
+
+def parse_ipb_forum(html: str, source: dict) -> list[dict]:
+    """Topic list of an Invision Power Board forum section (e.g. BleepingComputer forums).
+
+    Pinned topics are skipped: they are years old and never change.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out, seen = [], set()
+    for link in soup.select("a.topic_title"):
+        href = link.get("href")
+        if not href or href in seen:
+            continue
+        seen.add(href)
+        cell = link.find_parent("td")
+        if cell and cell.select_one(".ipsBadge"):
+            badge = cell.select_one(".ipsBadge").get_text(strip=True).lower()
+            if badge == "pinned":
+                continue
+        name = link.select_one("[itemprop=name]")
+        title = (name or link).get_text(" ", strip=True)
+        published = None
+        m = _IPB_STARTED_RE.search(link.get("title", ""))
+        if m:
+            try:
+                published = _iso(datetime.strptime(m.group(1), "%d %B %Y - %I:%M %p"))
+            except ValueError:
+                pass
+        author = None
+        desc = cell.select_one(".desc") if cell else None
+        if desc:
+            am = re.search(r"Started by\s+(.+?)\s*,", desc.get_text(" ", strip=True))
+            author = am.group(1) if am else None
+        out.append(item(source, href, title, title, author, published))
+    return out
 
 
 def parse_telegram(html: str, source: dict) -> list[dict]:

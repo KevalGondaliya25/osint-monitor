@@ -2,8 +2,10 @@
 
     uvicorn app.api:app --reload
 """
+import asyncio
 import json
 import logging
+import os
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -16,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc, func, or_, select
 
 from app.config import settings
+from app.crawler_service import CrawlerService
 from app.db import Article, CrawlRun, Session, init_db, utcnow
 from app.sources import SOURCES, SOURCES_BY_NAME
 
@@ -34,10 +37,21 @@ async def lifespan(app: FastAPI):
     try:
         await producer.start()
         app.state.producer = producer
-    except Exception as exc:  # API still serves data without Kafka
-        log.warning("Kafka unavailable, crawl triggers disabled: %s", exc)
+    except Exception as exc:
+        log.warning("Kafka unavailable, crawling in-process instead: %s", exc)
         await producer.stop()
+
+    # Local mode: without Kafka the API runs the crawler itself (set AUTO_CRAWL=0 to disable).
+    app.state.local_crawler = None
+    scheduler = None
+    if app.state.producer is None and os.getenv("AUTO_CRAWL", "1") != "0":
+        app.state.local_crawler = CrawlerService()
+        scheduler = asyncio.create_task(app.state.local_crawler.scheduler())
+        log.info("local crawler started: every %ss over %d sources", settings.crawl_interval, len(SOURCES))
     yield
+    if scheduler:
+        scheduler.cancel()
+        await app.state.local_crawler.fetcher.close()
     if app.state.producer:
         await app.state.producer.stop()
 
@@ -77,14 +91,18 @@ async def list_articles(
     if source:
         stmt = stmt.where(Article.source == source)
     async with Session() as s:
-        rows = (await s.execute(stmt.limit(2000 if (keyword or alerts_only) else limit).offset(offset))).scalars().all()
-    items = [r.to_dict() for r in rows]
-    # keyword filters run in Python so the same code works on SQLite and Postgres JSON
-    if keyword:
-        items = [i for i in items if keyword.lower() in i["keywords"]]
-    if alerts_only:
-        items = [i for i in items if i["keywords"]]
-    return {"count": len(items[:limit]), "items": items[:limit]}
+        if keyword or alerts_only:
+            # keyword filters run in Python so the same code works on SQLite and Postgres JSON
+            items = [r.to_dict() for r in (await s.execute(stmt)).scalars().all()]
+            if keyword:
+                items = [i for i in items if keyword.lower() in i["keywords"]]
+            if alerts_only:
+                items = [i for i in items if i["keywords"]]
+            total, items = len(items), items[offset:offset + limit]
+        else:
+            total = await s.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
+            items = [r.to_dict() for r in (await s.execute(stmt.limit(limit).offset(offset))).scalars().all()]
+    return {"count": len(items), "total": total, "offset": offset, "limit": limit, "items": items}
 
 
 @app.get("/api/articles/{article_id}")
@@ -150,7 +168,15 @@ async def sources():
 async def trigger_crawl(req: CrawlRequest):
     if req.source != "*" and req.source not in SOURCES_BY_NAME:
         raise HTTPException(404, f"unknown source {req.source!r}")
-    if not app.state.producer:
-        raise HTTPException(503, "Kafka is not connected")
-    await app.state.producer.send_and_wait(settings.jobs_topic, {"source": req.source})
-    return {"queued": req.source}
+    if app.state.producer:
+        await app.state.producer.send_and_wait(settings.jobs_topic, {"source": req.source})
+        return {"queued": req.source}
+    crawler = app.state.local_crawler
+    if not crawler:
+        raise HTTPException(503, "Kafka is not connected and AUTO_CRAWL=0")
+    if req.source == "*":
+        task = crawler.run_all()
+    else:
+        task = crawler.run_source(SOURCES_BY_NAME[req.source])
+    app.state.crawl_task = asyncio.create_task(task)  # keep a reference so it isn't GC'd
+    return {"queued": req.source, "mode": "local"}

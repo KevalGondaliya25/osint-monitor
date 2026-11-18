@@ -3,7 +3,7 @@ import asyncio
 import logging
 
 from .fetcher import Fetcher
-from .parsers import parse_hn_item, parse_reddit, parse_rss, parse_telegram
+from .parsers import parse_hn_item, parse_ipb_forum, parse_reddit, parse_rss, parse_telegram
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ async def crawl_source(fetcher: Fetcher, source: dict) -> list[dict]:
         async def one(i: int):
             try:
                 return parse_hn_item((await fetcher.get(f"{source['url']}/item/{i}.json", throttle=False)).json(), source)
-            except Exception as exc:  # one bad item should not kill the batch
+            except Exception as exc:
                 log.warning("HN item %s failed: %s", i, exc)
                 return None
 
@@ -37,5 +37,8 @@ async def crawl_source(fetcher: Fetcher, source: dict) -> list[dict]:
 
     if kind == "telegram":
         return parse_telegram(await fetcher.get_text(source["url"], render=render), source)
+
+    if kind == "forum":
+        return parse_ipb_forum(await fetcher.get_text(source["url"], render=render), source)
 
     raise ValueError(f"unknown source type: {kind}")

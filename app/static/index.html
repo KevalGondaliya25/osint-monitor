@@ -71,6 +71,13 @@
   .sources .st.never { background: var(--line); }
   .sources .nm { flex: 1; }
   .sources .ct { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  .pager .pages { display: flex; gap: 4px; flex-wrap: wrap; }
+  .pager button { font: inherit; font-size: 12.5px; min-width: 32px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); cursor: pointer; font-variant-numeric: tabular-nums; }
+  .pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .pager button.cur { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pager button:disabled { opacity: .45; cursor: default; }
+  .pager .gap { padding: 5px 2px; }
   .empty { padding: 30px 16px; text-align: center; color: var(--muted); }
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -105,6 +112,7 @@
         <label class="toggle"><input type="checkbox" id="alertsOnly"> Alerts only</label>
       </div>
       <ul class="feed" id="feed"></ul>
+      <nav class="pager" id="pager" aria-label="Feed pages"></nav>
     </section>
 
     <aside class="side">
@@ -133,7 +141,8 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { demo: false, data: null, keyword: null };
+  const PAGE_SIZE = 10;
+  const state = { demo: false, data: null, keyword: null, page: 1, feed: { items: [], total: 0 } };
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const ago = (iso) => {
@@ -151,10 +160,8 @@
 
   async function load() {
     try {
-      const [stats, articles, sources] = await Promise.all([
-        api("/api/stats"), api("/api/articles?limit=200"), api("/api/sources"),
-      ]);
-      state.data = { stats, articles: articles.items, sources };
+      const [stats, sources] = await Promise.all([api("/api/stats"), api("/api/sources")]);
+      state.data = { stats, sources };
       state.demo = false;
     } catch {
       // No backend reachable (e.g. static preview): fall back to bundled sample data
@@ -198,19 +205,75 @@
         <span class="ct">${s.status === "never" ? "—" : ago(s.last_run)}</span>
       </li>`).join("");
 
-    renderFeed();
+    return loadFeed();
   }
 
-  function renderFeed() {
-    const q = $("q").value.trim().toLowerCase();
+  let feedSeq = 0;
+  async function loadFeed() {
+    const q = $("q").value.trim();
     const src = $("sourceSel").value;
     const alertsOnly = $("alertsOnly").checked;
     const kw = state.keyword;
-    const items = state.data.articles.filter((a) =>
-      (!q || (a.title + " " + a.content).toLowerCase().includes(q)) &&
-      (!src || a.source === src) &&
-      (!alertsOnly || a.keywords.length) &&
-      (!kw || a.keywords.includes(kw)));
+    const offset = (state.page - 1) * PAGE_SIZE;
+    const seq = ++feedSeq;
+    let items, total;
+    if (state.demo) {
+      const ql = q.toLowerCase();
+      const all = state.data.articles.filter((a) =>
+        (!ql || (a.title + " " + a.content).toLowerCase().includes(ql)) &&
+        (!src || a.source === src) &&
+        (!alertsOnly || a.keywords.length) &&
+        (!kw || a.keywords.includes(kw)));
+      total = all.length;
+      items = all.slice(offset, offset + PAGE_SIZE);
+    } else {
+      const p = new URLSearchParams({ limit: PAGE_SIZE, offset });
+      if (q) p.set("q", q);
+      if (src) p.set("source", src);
+      if (alertsOnly) p.set("alerts_only", "true");
+      if (kw) p.set("keyword", kw);
+      try { ({ items, total } = await api("/api/articles?" + p)); }
+      catch (e) { return toast("Could not load feed (" + e.message + ")"); }
+    }
+    if (seq !== feedSeq) return; // a newer request superseded this one
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (state.page > pages) { state.page = pages; return loadFeed(); } // feed shrank under us
+    state.feed = { items, total };
+    renderFeed();
+  }
+
+  function goTo(page) {
+    state.page = page;
+    loadFeed().then(() => $("feed").closest(".panel").scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
+  function renderPager() {
+    const { total } = state.feed;
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const cur = state.page;
+    if (!total) { $("pager").innerHTML = ""; return; }
+    // 1 … 4 5 [6] 7 8 … 20
+    const nums = [...new Set([1, cur - 2, cur - 1, cur, cur + 1, cur + 2, pages])].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
+    let html = "", prev = 0;
+    for (const n of nums) {
+      if (n - prev > 1) html += '<span class="gap">…</span>';
+      html += `<button data-page="${n}"${n === cur ? ' class="cur" aria-current="page"' : ""}>${n}</button>`;
+      prev = n;
+    }
+    const from = (cur - 1) * PAGE_SIZE + 1, to = Math.min(total, cur * PAGE_SIZE);
+    $("pager").innerHTML = `
+      <span>${from}–${to} of ${total.toLocaleString()}</span>
+      <span class="pages">
+        <button data-page="${cur - 1}"${cur === 1 ? " disabled" : ""} aria-label="Previous page">‹ Prev</button>
+        ${html}
+        <button data-page="${cur + 1}"${cur === pages ? " disabled" : ""} aria-label="Next page">Next ›</button>
+      </span>`;
+  }
+
+  function renderFeed() {
+    const kw = state.keyword;
+    const items = state.feed.items;
+    renderPager();
 
     $("feed").innerHTML = items.length ? items.map((a) => {
       const ind = a.indicators || {};
@@ -226,22 +289,28 @@
         </div>
       </li>`;
     }).join("") : `<li class="empty">No matching articles${kw ? ` for “${esc(kw)}” <button id="clearKw">Clear filter</button>` : ""}</li>`;
-    const clr = $("clearKw"); if (clr) clr.onclick = () => { state.keyword = null; renderFeed(); };
+    const clr = $("clearKw"); if (clr) clr.onclick = () => { state.keyword = null; state.page = 1; loadFeed(); };
   }
 
-  $("q").addEventListener("input", renderFeed);
-  $("sourceSel").addEventListener("change", renderFeed);
-  $("alertsOnly").addEventListener("change", renderFeed);
+  const refilter = () => { state.page = 1; loadFeed(); };
+  let searchTimer;
+  $("q").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(refilter, 300); });
+  $("sourceSel").addEventListener("change", refilter);
+  $("alertsOnly").addEventListener("change", refilter);
+  $("pager").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-page]"); if (!b || b.disabled) return;
+    goTo(Number(b.dataset.page));
+  });
   $("kwBars").addEventListener("click", (e) => {
     const b = e.target.closest(".bar"); if (!b) return;
     state.keyword = state.keyword === b.dataset.kw ? null : b.dataset.kw;
     toast(state.keyword ? `Filtering by “${state.keyword}”` : "Keyword filter cleared");
-    renderFeed();
+    refilter();
   });
   $("refreshBtn").addEventListener("click", load);
   $("crawlBtn").addEventListener("click", async () => {
     if (state.demo) return toast("Demo mode: run the stack with docker compose to crawl live");
-    try { await api("/api/crawl", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"source":"*"}' }); toast("Crawl queued on Kafka"); setTimeout(load, 8000); }
+    try { await api("/api/crawl", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"source":"*"}' }); toast("Crawl started"); setTimeout(load, 15000); }
     catch (e) { toast("Could not queue crawl (" + e.message + ")"); }
   });
 
