@@ -1,0 +1,15 @@
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+sqlalchemy[asyncio]==2.0.*
+asyncpg==0.30.*
+aiosqlite==0.20.*
+aiokafka==0.12.*
+httpx==0.27.*
+feedparser==6.0.*
+beautifulsoup4==4.12.*
+minio==7.2.*
+# optional: headless browser for JS-heavy / protected sites
+# playwright==1.48.*
+
+# dev
+pytest==8.*

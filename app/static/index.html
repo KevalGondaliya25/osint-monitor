@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSINT Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #636b78; --line: #e4e7ec;
+    --accent: #2f5bea; --accent-soft: #e9eefd; --alert: #c2410c; --alert-soft: #fff1e8;
+    --ok: #15803d; --err: #b91c1c; --bar: #c9d5fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --ink: #e8eaee; --muted: #9098a6; --line: #262b35;
+      --accent: #7b9cff; --accent-soft: #1d2540; --alert: #fb923c; --alert-soft: #2b1b10;
+      --ok: #4ade80; --err: #f87171; --bar: #2c3a6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 Inter, system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  header .spacer { flex: 1; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 12px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  main { max-width: 1280px; margin: 0 auto; padding: 20px 24px 40px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .kpi .label { color: var(--muted); font-size: 12px; font-weight: 500; }
+  .kpi .value { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .kpi.alert .value { color: var(--alert); }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  .panel h2 { font-size: 13px; margin: 0; padding: 14px 16px 10px; font-weight: 600; }
+  .toolbar { display: flex; gap: 8px; padding: 0 16px 12px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  .toolbar input[type=search] { flex: 1; min-width: 180px; font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+  .toolbar select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+  .toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .feed { list-style: none; margin: 0; padding: 0; }
+  .feed li { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .feed li:last-child { border-bottom: 0; }
+  .feed .top { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .src { font-weight: 600; color: var(--ink); }
+  .type { font-family: "JetBrains Mono", monospace; font-size: 10.5px; text-transform: uppercase; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; }
+  .feed a.title { color: var(--ink); text-decoration: none; font-weight: 600; font-size: 14.5px; }
+  .feed a.title:hover { color: var(--accent); }
+  .feed p { margin: 3px 0 6px; color: var(--muted); font-size: 13px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag { font-size: 11.5px; padding: 1px 7px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
+  .tag.kw { background: var(--alert-soft); border-color: transparent; color: var(--alert); font-weight: 600; }
+  .tag.ioc { font-family: "JetBrains Mono", monospace; background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+  .side { display: flex; flex-direction: column; gap: 20px; }
+  .bars { padding: 0 16px 14px; }
+  .bar { display: grid; grid-template-columns: 110px 1fr 28px; gap: 8px; align-items: center; font-size: 12.5px; margin: 5px 0; cursor: pointer; }
+  .bar .track { display: block; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+  .bar .fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+  .bar .n { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar:hover .name { color: var(--accent); }
+  .chips { padding: 0 16px 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .sources { list-style: none; margin: 0; padding: 0 16px 10px; }
+  .sources li { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12.5px; border-top: 1px solid var(--line); }
+  .sources li:first-child { border-top: 0; }
+  .sources .st { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+  .sources .st.error { background: var(--err); }
+  .sources .st.never { background: var(--line); }
+  .sources .nm { flex: 1; }
+  .sources .ct { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .empty { padding: 30px 16px; text-align: center; color: var(--muted); }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2, 1fr); } header .meta { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="liveDot"></span>
+  <h1>OSINT Monitor</h1>
+  <span class="badge" id="modeBadge">Live</span>
+  <span class="spacer"></span>
+  <span class="meta" id="updated"></span>
+  <button id="refreshBtn">Refresh</button>
+  <button class="primary" id="crawlBtn">Crawl now</button>
+</header>
+
+<main>
+  <section class="kpis">
+    <div class="kpi"><div class="label">Articles stored</div><div class="value" id="kTotal">–</div></div>
+    <div class="kpi"><div class="label">Collected, last 24h</div><div class="value" id="k24">–</div></div>
+    <div class="kpi alert"><div class="label">Keyword alerts</div><div class="value" id="kAlerts">–</div></div>
+    <div class="kpi"><div class="label">Sources monitored</div><div class="value" id="kSources">–</div></div>
+  </section>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Feed</h2>
+      <div class="toolbar">
+        <input id="q" type="search" placeholder="Search titles and content…">
+        <select id="sourceSel"><option value="">All sources</option></select>
+        <label class="toggle"><input type="checkbox" id="alertsOnly"> Alerts only</label>
+      </div>
+      <ul class="feed" id="feed"></ul>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>Top keywords</h2>
+        <div class="bars" id="kwBars"></div>
+      </section>
+      <section class="panel">
+        <h2>Entities</h2>
+        <div class="chips" id="entities"></div>
+      </section>
+      <section class="panel">
+        <h2>CVEs mentioned</h2>
+        <div class="chips" id="cves"></div>
+      </section>
+      <section class="panel">
+        <h2>Source health</h2>
+        <ul class="sources" id="sources"></ul>
+      </section>
+    </aside>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script id="demo-data" type="application/json">{"stats": {"total": 16, "last_24h": 16, "alerts": 13, "sources": 11, "by_source": {"Al Jazeera": 2, "BBC Technology": 1, "BBC World": 2, "BleepingComputer": 2, "Hacker News": 2, "Reuters (Google News)": 1, "Telegram: durov": 1, "The Hacker News": 2, "r/OSINT": 1, "r/cybersecurity": 1, "r/worldnews": 1}, "top_keywords": [["phishing", 3], ["cyberattack", 2], ["ransomware", 2], ["malware", 2], ["data breach", 2], ["vulnerability", 1], ["disinformation", 1], ["election", 1], ["protest", 1], ["sanctions", 1], ["zero-day", 1], ["leak", 1]], "top_entities": [["United Nations", 1], ["MFA", 1], ["NATO", 1], ["National Cyber Security Centre", 1], ["Electoral Commission", 1], ["Google Earth", 1], ["Sentinel Hub", 1], ["Microsoft Threat Intelligence", 1], ["Parliament Buildings", 1], ["European Union", 1], ["Nordic Freight Group", 1], ["CISA", 1], ["ENISA", 1]], "top_cves": [["CVE-2026-31337", 1], ["CVE-2026-24858", 1]]}, "articles": [{"id": 1, "url": "#", "source": "BleepingComputer", "source_type": "rss", "title": "Ransomware gang claims attack on European logistics firm, leaks 200GB of data", "content": "The Akira ransomware group added Nordic Freight Group to its leak site. CISA and ENISA are tracking the incident.", "author": null, "published_at": "2026-11-18T12:55:44.139070", "fetched_at": "2026-11-18T12:58:44.164410", "keywords": ["leak", "ransomware"], "entities": ["Nordic Freight Group", "CISA", "ENISA"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 2, "url": "#", "source": "The Hacker News", "source_type": "rss", "title": "Critical Fortinet flaw CVE-2026-24858 exploited as zero-day", "content": "Attackers exploited CVE-2026-24858 in FortiOS before a patch was available. Malicious traffic came from 185.220.101.47.", "author": null, "published_at": "2026-11-18T12:38:44.139070", "fetched_at": "2026-11-18T12:58:44.169361", "keywords": ["zero-day"], "entities": [], "indicators": {"cves": ["CVE-2026-24858"], "ips": ["185.220.101.47"], "emails": []}, "raw_key": null}, {"id": 3, "url": "#", "source": "BBC World", "source_type": "rss", "title": "EU agrees new sanctions package targeting shipping networks", "content": "The European Union approved fresh sanctions aimed at shadow fleet operators and their insurers.", "author": null, "published_at": "2026-11-18T12:21:44.139070", "fetched_at": "2026-11-18T12:58:44.170613", "keywords": ["sanctions"], "entities": ["European Union"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 4, "url": "#", "source": "Al Jazeera", "source_type": "rss", "title": "Thousands join protest in Nairobi over proposed finance bill", "content": "Demonstrators gathered outside Parliament Buildings as police deployed tear gas in central Nairobi.", "author": null, "published_at": "2026-11-18T12:04:44.139070", "fetched_at": "2026-11-18T12:58:44.171838", "keywords": ["protest"], "entities": ["Parliament Buildings"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 5, "url": "#", "source": "Reuters (Google News)", "source_type": "rss", "title": "Microsoft warns of phishing campaign impersonating Teams meeting invites", "content": "Microsoft Threat Intelligence said the phishing lures target finance staff at mid-sized companies.", "author": null, "published_at": "2026-11-18T11:47:44.139070", "fetched_at": "2026-11-18T12:58:44.173016", "keywords": ["phishing"], "entities": ["Microsoft Threat Intelligence"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 6, "url": "#", "source": "Hacker News", "source_type": "hackernews", "title": "Show HN: I mapped 40k exposed Elasticsearch clusters leaking customer data", "content": "A researcher scanned public IPv4 space and found a large data breach exposure across cloud providers.", "author": null, "published_at": "2026-11-18T11:30:44.139070", "fetched_at": "2026-11-18T12:58:44.174112", "keywords": ["data breach"], "entities": [], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 7, "url": "#", "source": "r/OSINT", "source_type": "reddit", "title": "Best workflow for verifying geolocation of conflict footage?", "content": "Looking for tips beyond Google Earth and Sentinel Hub for shadow analysis and landmark matching.", "author": null, "published_at": "2026-11-18T11:13:44.139070", "fetched_at": "2026-11-18T12:58:44.175221", "keywords": [], "entities": ["Google Earth", "Sentinel Hub"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 8, "url": "#", "source": "r/cybersecurity", "source_type": "reddit", "title": "New malware strain spreading through fake browser updates", "content": "Several users reporting SocGholish style lures delivering an infostealer. IOCs posted below.", "author": null, "published_at": "2026-11-18T10:56:44.139070", "fetched_at": "2026-11-18T12:58:44.176447", "keywords": ["malware"], "entities": [], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 9, "url": "#", "source": "r/worldnews", "source_type": "reddit", "title": "Election officials report coordinated disinformation network ahead of vote", "content": "Electoral Commission says hundreds of accounts were amplifying false claims about polling stations.", "author": null, "published_at": "2026-11-18T10:39:44.139070", "fetched_at": "2026-11-18T12:58:44.177568", "keywords": ["disinformation", "election"], "entities": ["Electoral Commission"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 10, "url": "#", "source": "BBC Technology", "source_type": "rss", "title": "UK retailer confirms customer data breach after cyberattack", "content": "The National Cyber Security Centre is supporting the investigation into the cyberattack.", "author": null, "published_at": "2026-11-18T10:22:44.139070", "fetched_at": "2026-11-18T12:58:44.178707", "keywords": ["cyberattack", "data breach"], "entities": ["National Cyber Security Centre"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 11, "url": "#", "source": "Telegram: durov", "source_type": "telegram", "title": "We removed millions of groups and channels violating our terms this year", "content": "Moderation update on spam, scam and malware distribution channels.", "author": null, "published_at": "2026-11-18T10:05:44.139070", "fetched_at": "2026-11-18T12:58:44.179804", "keywords": ["malware"], "entities": [], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 12, "url": "#", "source": "The Hacker News", "source_type": "rss", "title": "Researchers detail Linux kernel vulnerability CVE-2026-31337 affecting containers", "content": "The vulnerability allows container escape on unpatched hosts. Proof of concept is public.", "author": null, "published_at": "2026-11-18T09:48:44.139070", "fetched_at": "2026-11-18T12:58:44.180950", "keywords": ["vulnerability"], "entities": [], "indicators": {"cves": ["CVE-2026-31337"], "ips": [], "emails": []}, "raw_key": null}, {"id": 13, "url": "#", "source": "BBC World", "source_type": "rss", "title": "NATO leaders meet in Brussels to discuss air defence funding", "content": "Defence ministers from NATO members discussed long-term spending commitments.", "author": null, "published_at": "2026-11-18T09:31:44.139070", "fetched_at": "2026-11-18T12:58:44.182157", "keywords": [], "entities": ["NATO"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 14, "url": "#", "source": "Hacker News", "source_type": "hackernews", "title": "How we cut our Kafka consumer lag from hours to seconds", "content": "A write-up on partitioning strategy, batching and backpressure in a Python pipeline.", "author": null, "published_at": "2026-11-18T09:14:44.139070", "fetched_at": "2026-11-18T12:58:44.183237", "keywords": [], "entities": [], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 15, "url": "#", "source": "BleepingComputer", "source_type": "rss", "title": "Phishing kit sold on Telegram bypasses MFA with reverse proxy", "content": "The kit, advertised on several Telegram channels, steals session cookies to bypass MFA.", "author": null, "published_at": "2026-11-18T08:57:44.139070", "fetched_at": "2026-11-18T12:58:44.184246", "keywords": ["phishing"], "entities": ["MFA"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}, {"id": 16, "url": "#", "source": "Al Jazeera", "source_type": "rss", "title": "UN report warns of rising cyberattack threat to humanitarian groups", "content": "The United Nations said aid agencies saw a sharp rise in ransomware and phishing incidents.", "author": null, "published_at": "2026-11-18T08:40:44.139070", "fetched_at": "2026-11-18T12:58:44.185418", "keywords": ["cyberattack", "phishing", "ransomware"], "entities": ["United Nations"], "indicators": {"cves": [], "ips": [], "emails": []}, "raw_key": null}], "sources": [{"name": "BBC World", "type": "rss", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "last_run": "2026-11-18T12:58:44.190319", "status": "ok", "last_items": 3, "error": null}, {"name": "BBC Technology", "type": "rss", "url": "https://feeds.bbci.co.uk/news/technology/rss.xml", "last_run": "2026-11-18T12:58:44.190323", "status": "ok", "last_items": 3, "error": null}, {"name": "Al Jazeera", "type": "rss", "url": "https://www.aljazeera.com/xml/rss/all.xml", "last_run": "2026-11-18T12:58:44.190324", "status": "ok", "last_items": 3, "error": null}, {"name": "Reuters (Google News)", "type": "rss", "url": "https://news.google.com/rss/search?q=site:reuters.com&hl=en-US&gl=US&ceid=US:en", "last_run": "2026-11-18T12:58:44.190325", "status": "ok", "last_items": 3, "error": null}, {"name": "BleepingComputer", "type": "rss", "url": "https://www.bleepingcomputer.com/feed/", "last_run": "2026-11-18T12:58:44.190326", "status": "ok", "last_items": 3, "error": null}, {"name": "The Hacker News", "type": "rss", "url": "https://feeds.feedburner.com/TheHackersNews", "last_run": "2026-11-18T12:58:44.190327", "status": "ok", "last_items": 3, "error": null}, {"name": "Hacker News", "type": "hackernews", "url": "https://hacker-news.firebaseio.com/v0", "last_run": "2026-11-18T12:58:44.190327", "status": "ok", "last_items": 3, "error": null}, {"name": "r/cybersecurity", "type": "reddit", "url": "https://www.reddit.com/r/cybersecurity/new.json?limit=50", "last_run": "2026-11-18T12:58:44.190328", "status": "ok", "last_items": 3, "error": null}, {"name": "r/OSINT", "type": "reddit", "url": "https://www.reddit.com/r/OSINT/new.json?limit=50", "last_run": "2026-11-18T12:58:44.190328", "status": "ok", "last_items": 3, "error": null}, {"name": "r/worldnews", "type": "reddit", "url": "https://www.reddit.com/r/worldnews/new.json?limit=50", "last_run": "2026-11-18T12:58:44.190329", "status": "ok", "last_items": 3, "error": null}, {"name": "Telegram: durov", "type": "telegram", "url": "https://t.me/s/durov", "last_run": "2026-11-18T12:58:44.190330", "status": "ok", "last_items": 3, "error": null}]}</script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { demo: false, data: null, keyword: null };
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const ago = (iso) => {
+    if (!iso) return "";
+    const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+    return m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
+  };
+  const toast = (msg) => { const t = $("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); };
+
+  async function api(path, opts) {
+    const r = await fetch(path, opts);
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.json();
+  }
+
+  async function load() {
+    try {
+      const [stats, articles, sources] = await Promise.all([
+        api("/api/stats"), api("/api/articles?limit=200"), api("/api/sources"),
+      ]);
+      state.data = { stats, articles: articles.items, sources };
+      state.demo = false;
+    } catch {
+      // No backend reachable (e.g. static preview): fall back to bundled sample data
+      const demo = JSON.parse($("demo-data").textContent);
+      const now = Date.now();
+      demo.articles.forEach((a, i) => { a.published_at = new Date(now - (17 * i + 3) * 60000).toISOString(); });
+      demo.sources.forEach((s) => { s.last_run = new Date(now - 4 * 60000).toISOString(); });
+      state.data = demo;
+      state.demo = true;
+    }
+    $("modeBadge").textContent = state.demo ? "Demo data" : "Live";
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+    renderAll();
+  }
+
+  function renderAll() {
+    const { stats, sources } = state.data;
+    $("kTotal").textContent = stats.total.toLocaleString();
+    $("k24").textContent = stats.last_24h.toLocaleString();
+    $("kAlerts").textContent = stats.alerts.toLocaleString();
+    $("kSources").textContent = stats.sources;
+
+    const sel = $("sourceSel"), cur = sel.value;
+    sel.innerHTML = '<option value="">All sources</option>' + sources.map((s) => `<option${s.name === cur ? " selected" : ""}>${esc(s.name)}</option>`).join("");
+
+    const max = Math.max(1, ...stats.top_keywords.map((k) => k[1]));
+    $("kwBars").innerHTML = stats.top_keywords.length ? stats.top_keywords.map(([k, n]) => `
+      <div class="bar" data-kw="${esc(k)}" title="Filter feed by “${esc(k)}”">
+        <span class="name">${esc(k)}</span>
+        <span class="track"><span class="fill" style="width:${(n / max) * 100}%"></span></span>
+        <span class="n">${n}</span>
+      </div>`).join("") : '<div class="empty">No keyword hits yet</div>';
+
+    $("entities").innerHTML = stats.top_entities.map(([e, n]) => `<span class="tag" title="${n} mentions">${esc(e)}</span>`).join("") || '<span class="tag">none</span>';
+    $("cves").innerHTML = stats.top_cves.map(([c]) => `<span class="tag ioc">${esc(c)}</span>`).join("") || '<span class="tag">none</span>';
+
+    $("sources").innerHTML = sources.map((s) => `
+      <li title="${esc(s.error || s.url)}">
+        <span class="st ${esc(s.status)}"></span>
+        <span class="nm">${esc(s.name)}</span>
+        <span class="ct">${s.status === "never" ? "—" : ago(s.last_run)}</span>
+      </li>`).join("");
+
+    renderFeed();
+  }
+
+  function renderFeed() {
+    const q = $("q").value.trim().toLowerCase();
+    const src = $("sourceSel").value;
+    const alertsOnly = $("alertsOnly").checked;
+    const kw = state.keyword;
+    const items = state.data.articles.filter((a) =>
+      (!q || (a.title + " " + a.content).toLowerCase().includes(q)) &&
+      (!src || a.source === src) &&
+      (!alertsOnly || a.keywords.length) &&
+      (!kw || a.keywords.includes(kw)));
+
+    $("feed").innerHTML = items.length ? items.map((a) => {
+      const ind = a.indicators || {};
+      const iocs = [...(ind.cves || []), ...(ind.ips || [])];
+      return `<li>
+        <div class="top"><span class="src">${esc(a.source)}</span><span class="type">${esc(a.source_type)}</span><span>${ago(a.published_at || a.fetched_at)}</span></div>
+        <a class="title" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title)}</a>
+        ${a.content ? `<p>${esc(a.content.slice(0, 220))}</p>` : ""}
+        <div class="tags">
+          ${a.keywords.map((k) => `<span class="tag kw">${esc(k)}</span>`).join("")}
+          ${iocs.map((i) => `<span class="tag ioc">${esc(i)}</span>`).join("")}
+          ${a.entities.slice(0, 4).map((e) => `<span class="tag">${esc(e)}</span>`).join("")}
+        </div>
+      </li>`;
+    }).join("") : `<li class="empty">No matching articles${kw ? ` for “${esc(kw)}” <button id="clearKw">Clear filter</button>` : ""}</li>`;
+    const clr = $("clearKw"); if (clr) clr.onclick = () => { state.keyword = null; renderFeed(); };
+  }
+
+  $("q").addEventListener("input", renderFeed);
+  $("sourceSel").addEventListener("change", renderFeed);
+  $("alertsOnly").addEventListener("change", renderFeed);
+  $("kwBars").addEventListener("click", (e) => {
+    const b = e.target.closest(".bar"); if (!b) return;
+    state.keyword = state.keyword === b.dataset.kw ? null : b.dataset.kw;
+    toast(state.keyword ? `Filtering by “${state.keyword}”` : "Keyword filter cleared");
+    renderFeed();
+  });
+  $("refreshBtn").addEventListener("click", load);
+  $("crawlBtn").addEventListener("click", async () => {
+    if (state.demo) return toast("Demo mode: run the stack with docker compose to crawl live");
+    try { await api("/api/crawl", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"source":"*"}' }); toast("Crawl queued on Kafka"); setTimeout(load, 8000); }
+    catch (e) { toast("Could not queue crawl (" + e.message + ")"); }
+  });
+
+  load();
+  setInterval(() => { if (!state.demo) load(); }, 60000);
+})();
+</script>
+</body>
+</html>
